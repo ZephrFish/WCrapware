@@ -2,9 +2,18 @@
 
 A comprehensive Windows 10/11 debloating and optimisation tool with safety features, system monitoring, and backup/restore capabilities.
 
+**Now available in both CLI and GUI versions!**
+
 
 ## Quick Start
 
+### GUI Version (Recommended for beginners)
+```powershell
+# Launch the graphical interface
+.\crapremover-gui.ps1
+```
+
+### CLI Version
 ```powershell
 # Run interactively (requires Admin)
 .\crapremover.ps1
@@ -58,6 +67,17 @@ A comprehensive Windows 10/11 debloating and optimisation tool with safety featu
 ```
 
 ## Features
+
+### GUI Version
+The graphical interface (`crapremover-gui.ps1`) provides:
+- **Dark themed modern UI** with tabbed navigation
+- **Quick Actions tab**: One-click profiles (Gaming, Privacy, Work) and Quick Fixes
+- **Detailed Options tab**: Granular control over individual operations
+- **System Health tab**: Real-time CPU, RAM, Disk monitoring with health score
+- **Tools tab**: Windows Store repair, driver cleanup, restore points
+- **Activity Log**: Live scrolling log with color-coded messages
+- **Progress Bar**: Visual feedback during operations
+- **Dry Run mode**: Preview changes before applying
 
 ### Core Functionality
 
@@ -301,5 +321,6 @@ Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
 - [x] Windows Store repair functionality
 - [x] Automatic scheduled maintenance
 - [x] Portable version generator
+- [x] GUI version with Windows Forms
 - [ ] Cloud backup integration
 - [ ] Multi-language support

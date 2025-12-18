@@ -205,6 +205,27 @@ function Show-HealthDashboard {
     Write-Host "    System Uptime:        $uptimeStr" -ForegroundColor White
 
     Write-Host ""
+    Write-Host "  +------------------------------------------------------------+" -ForegroundColor DarkGray
+    Write-Host "  |  HOW TO IMPROVE YOUR SCORE                                 |" -ForegroundColor Yellow
+    Write-Host "  +------------------------------------------------------------+" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "    Score starts at 100 and deducts points for:" -ForegroundColor White
+    Write-Host ""
+    Write-Host "    Issue              Penalty   Threshold" -ForegroundColor DarkCyan
+    Write-Host "    -----------------  -------   --------------" -ForegroundColor DarkGray
+    Write-Host "    High CPU             -20     >80% usage" -ForegroundColor $(if ($health.CPUUsage -gt 80) { "Red" } else { "Gray" })
+    Write-Host "    Medium CPU           -10     >50% usage" -ForegroundColor $(if ($health.CPUUsage -gt 50 -and $health.CPUUsage -le 80) { "Yellow" } else { "Gray" })
+    Write-Host "    High Memory          -20     >85% usage" -ForegroundColor $(if ($health.RAMPercent -gt 85) { "Red" } else { "Gray" })
+    Write-Host "    Medium Memory        -10     >70% usage" -ForegroundColor $(if ($health.RAMPercent -gt 70 -and $health.RAMPercent -le 85) { "Yellow" } else { "Gray" })
+    Write-Host "    Critical Disk        -25     >90% full" -ForegroundColor $(if ($health.DiskPercent -gt 90) { "Red" } else { "Gray" })
+    Write-Host "    Low Disk             -10     >75% full" -ForegroundColor $(if ($health.DiskPercent -gt 75 -and $health.DiskPercent -le 90) { "Yellow" } else { "Gray" })
+    Write-Host "    Many Startup Apps    -10     >15 programs" -ForegroundColor $(if ($health.StartupCount -gt 15) { "Yellow" } else { "Gray" })
+    Write-Host ""
+    Write-Host "    Quick Fixes:" -ForegroundColor White
+    Write-Host "      [F] Quick Fix Menu  - One-click solutions" -ForegroundColor Cyan
+    Write-Host "      [1] Quick Actions   - Remove bloatware, clean temp files" -ForegroundColor Cyan
+    Write-Host "      [Q] Quick Start     - Profile-based optimization" -ForegroundColor Cyan
+    Write-Host ""
     Write-Host "  +============================================================+" -ForegroundColor Cyan
 
     return $health
