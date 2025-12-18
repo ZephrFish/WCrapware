@@ -832,6 +832,10 @@ function Show-MainMenu {
     Write-Host "║ R.  System Requirements Check                                  ║" -ForegroundColor Green
     Write-Host "║ B.  View Benchmark Comparison                                  ║" -ForegroundColor Green
     Write-Host "╠════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+    Write-Host "║ ADDITIONAL TOOLS                                               ║" -ForegroundColor Magenta
+    Write-Host "╠════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+    Write-Host "║ T.  Tools (Store Repair, Drivers, Maintenance, Portable)       ║" -ForegroundColor Green
+    Write-Host "╠════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
     Write-Host "║ 0.  Exit                                                       ║" -ForegroundColor Red
     Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
@@ -2041,6 +2045,421 @@ function Show-QuickFixMenu {
     }
 }
 
+# =============================================================================
+# WINDOWS STORE REPAIR FUNCTIONALITY
+# =============================================================================
+
+function Repair-WindowsStore {
+    <#
+    .SYNOPSIS
+    Repairs Windows Store and related components
+    #>
+    Write-Host "`n  Repairing Windows Store..." -ForegroundColor Cyan
+    Write-Log "Starting Windows Store repair..." "INFO"
+
+    if ($DryRun) {
+        Write-Host "  [DRY RUN] Would repair Windows Store" -ForegroundColor Yellow
+        Write-Log "[DRY RUN] Would repair Windows Store" "INFO"
+        return
+    }
+
+    $steps = 0
+    $totalSteps = 5
+
+    # Step 1: Clear Windows Store cache
+    $steps++
+    Write-Host "  [$steps/$totalSteps] Clearing Windows Store cache..." -ForegroundColor White
+    try {
+        Stop-Process -Name "WinStore.App" -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "$env:LOCALAPPDATA\Packages\Microsoft.WindowsStore_8wekyb3d8bbwe\LocalCache\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "$env:LOCALAPPDATA\Packages\Microsoft.WindowsStore_8wekyb3d8bbwe\LocalState\*" -Recurse -Force -ErrorAction SilentlyContinue
+        # Run wsreset silently
+        Start-Process "wsreset.exe" -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
+        Write-Host "      [OK] Cache cleared" -ForegroundColor Green
+    } catch {
+        Write-Host "      [!] Could not clear cache: $_" -ForegroundColor Yellow
+    }
+
+    # Step 2: Re-register Windows Store
+    $steps++
+    Write-Host "  [$steps/$totalSteps] Re-registering Windows Store..." -ForegroundColor White
+    try {
+        $manifest = (Get-AppxPackage Microsoft.WindowsStore).InstallLocation + "\AppxManifest.xml"
+        Add-AppxPackage -DisableDevelopmentMode -Register $manifest -ErrorAction Stop
+        Write-Host "      [OK] Store re-registered" -ForegroundColor Green
+    } catch {
+        Write-Host "      [!] Could not re-register: $_" -ForegroundColor Yellow
+    }
+
+    # Step 3: Reset Windows Store app
+    $steps++
+    Write-Host "  [$steps/$totalSteps] Resetting Windows Store app..." -ForegroundColor White
+    try {
+        Get-AppxPackage -AllUsers Microsoft.WindowsStore | ForEach-Object {
+            Add-AppxPackage -DisableDevelopmentMode -Register "$($_.InstallLocation)\AppXManifest.xml" -ErrorAction SilentlyContinue
+        }
+        Write-Host "      [OK] Store app reset" -ForegroundColor Green
+    } catch {
+        Write-Host "      [!] Could not reset app: $_" -ForegroundColor Yellow
+    }
+
+    # Step 4: Repair Windows Store dependencies
+    $steps++
+    Write-Host "  [$steps/$totalSteps] Repairing Store dependencies..." -ForegroundColor White
+    try {
+        # Re-register store purchase app
+        Get-AppxPackage -AllUsers Microsoft.StorePurchaseApp | ForEach-Object {
+            Add-AppxPackage -DisableDevelopmentMode -Register "$($_.InstallLocation)\AppXManifest.xml" -ErrorAction SilentlyContinue
+        }
+        # Re-register Xbox Identity (needed for game installs)
+        Get-AppxPackage -AllUsers Microsoft.XboxIdentityProvider | ForEach-Object {
+            Add-AppxPackage -DisableDevelopmentMode -Register "$($_.InstallLocation)\AppXManifest.xml" -ErrorAction SilentlyContinue
+        }
+        Write-Host "      [OK] Dependencies repaired" -ForegroundColor Green
+    } catch {
+        Write-Host "      [!] Could not repair dependencies: $_" -ForegroundColor Yellow
+    }
+
+    # Step 5: Restart Windows Store service
+    $steps++
+    Write-Host "  [$steps/$totalSteps] Restarting Store services..." -ForegroundColor White
+    try {
+        Restart-Service -Name "wuauserv" -Force -ErrorAction SilentlyContinue
+        Start-Service -Name "InstallService" -ErrorAction SilentlyContinue
+        Write-Host "      [OK] Services restarted" -ForegroundColor Green
+    } catch {
+        Write-Host "      [!] Could not restart services: $_" -ForegroundColor Yellow
+    }
+
+    Write-Host ""
+    Write-Host "  Windows Store repair completed!" -ForegroundColor Green
+    Write-Host "  Note: You may need to restart your PC for all changes to take effect." -ForegroundColor Yellow
+    Write-Log "Windows Store repair completed" "SUCCESS"
+}
+
+# =============================================================================
+# DRIVER CLEANUP FUNCTIONALITY
+# =============================================================================
+
+function Clean-OldDrivers {
+    <#
+    .SYNOPSIS
+    Removes old/unused driver packages from the driver store
+    #>
+    Write-Host "`n  Cleaning old driver packages..." -ForegroundColor Cyan
+    Write-Log "Starting driver cleanup..." "INFO"
+
+    if ($DryRun) {
+        Write-Host "  [DRY RUN] Would clean old drivers" -ForegroundColor Yellow
+        Write-Log "[DRY RUN] Would clean old drivers" "INFO"
+    }
+
+    # Get all third-party drivers
+    Write-Host "  Scanning driver store..." -ForegroundColor White
+
+    try {
+        $drivers = Get-WindowsDriver -Online -All | Where-Object {
+            $_.Driver -like "oem*.inf" -and $_.OriginalFileName -notlike "*windows*"
+        }
+
+        if ($drivers.Count -eq 0) {
+            Write-Host "  No old drivers found to clean." -ForegroundColor Green
+            return
+        }
+
+        # Group by class to find duplicates
+        $driverGroups = $drivers | Group-Object -Property ClassName
+
+        $totalCleaned = 0
+        $totalSize = 0
+
+        foreach ($group in $driverGroups) {
+            # Sort by version and date, keep newest
+            $sortedDrivers = $group.Group | Sort-Object -Property @{Expression={[version]$_.Version}; Descending=$true}, Date -Descending
+
+            # Skip the newest one, mark others for removal
+            $oldDrivers = $sortedDrivers | Select-Object -Skip 1
+
+            foreach ($driver in $oldDrivers) {
+                if ($DryRun) {
+                    Write-Host "  [DRY RUN] Would remove: $($driver.Driver) - $($driver.ProviderName) v$($driver.Version)" -ForegroundColor Yellow
+                    $totalCleaned++
+                } else {
+                    try {
+                        # Use pnputil to remove old driver
+                        $result = & pnputil /delete-driver $driver.Driver /force 2>&1
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Host "  [OK] Removed: $($driver.Driver) - $($driver.ProviderName)" -ForegroundColor Green
+                            $totalCleaned++
+                        }
+                    } catch {
+                        Write-Log "Could not remove driver $($driver.Driver): $_" "DEBUG"
+                    }
+                }
+            }
+        }
+
+        Write-Host ""
+        Write-Host "  Driver cleanup completed!" -ForegroundColor Green
+        Write-Host "  Removed $totalCleaned old driver package(s)" -ForegroundColor Cyan
+        Write-Log "Driver cleanup completed. Removed $totalCleaned packages." "SUCCESS"
+
+    } catch {
+        Write-Host "  [!] Error scanning drivers: $_" -ForegroundColor Red
+        Write-Log "Driver cleanup failed: $_" "ERROR"
+    }
+}
+
+function Show-DriverInfo {
+    <#
+    .SYNOPSIS
+    Shows information about installed drivers
+    #>
+    Write-Host "`n  Driver Information" -ForegroundColor Cyan
+    Write-Host "  ==================" -ForegroundColor Cyan
+
+    try {
+        $drivers = Get-WindowsDriver -Online -All | Where-Object { $_.Driver -like "oem*.inf" }
+
+        $grouped = $drivers | Group-Object -Property ClassName | Sort-Object -Property Count -Descending
+
+        Write-Host ""
+        Write-Host "  Driver packages by category:" -ForegroundColor White
+        Write-Host ""
+
+        foreach ($group in $grouped | Select-Object -First 10) {
+            $count = $group.Count
+            $name = if ($group.Name) { $group.Name } else { "Unknown" }
+            Write-Host "    $name" -ForegroundColor Yellow -NoNewline
+            Write-Host ": $count package(s)" -ForegroundColor Gray
+        }
+
+        $totalCount = $drivers.Count
+        Write-Host ""
+        Write-Host "  Total third-party driver packages: $totalCount" -ForegroundColor Cyan
+
+    } catch {
+        Write-Host "  [!] Could not retrieve driver information: $_" -ForegroundColor Red
+    }
+}
+
+# =============================================================================
+# SCHEDULED MAINTENANCE
+# =============================================================================
+
+function Enable-ScheduledMaintenance {
+    <#
+    .SYNOPSIS
+    Creates a scheduled task for automatic maintenance
+    #>
+    Write-Host "`n  Setting up scheduled maintenance..." -ForegroundColor Cyan
+    Write-Log "Setting up scheduled maintenance..." "INFO"
+
+    if ($DryRun) {
+        Write-Host "  [DRY RUN] Would create scheduled maintenance task" -ForegroundColor Yellow
+        return
+    }
+
+    $taskName = "WindowsCrapRemover_Maintenance"
+    $scriptPath = $PSCommandPath
+
+    # Check if task already exists
+    $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+
+    if ($existingTask) {
+        Write-Host "  Scheduled task already exists." -ForegroundColor Yellow
+        $choice = Read-Host "  Update existing task? (Y/N)"
+        if ($choice -ne 'Y' -and $choice -ne 'y') {
+            return
+        }
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+    }
+
+    try {
+        # Create action - run cleanup weekly
+        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -FixDisk -FixPrivacy -Silent"
+
+        # Create trigger - weekly on Sunday at 3 AM
+        $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 3AM
+
+        # Create settings
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable:$false
+
+        # Create principal (run as SYSTEM with highest privileges)
+        $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+
+        # Register the task
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Weekly system maintenance by Windows Crap Remover"
+
+        Write-Host ""
+        Write-Host "  [OK] Scheduled maintenance task created!" -ForegroundColor Green
+        Write-Host "  Task: $taskName" -ForegroundColor White
+        Write-Host "  Schedule: Every Sunday at 3:00 AM" -ForegroundColor White
+        Write-Host "  Actions: Clean temp files, Apply privacy fixes" -ForegroundColor White
+        Write-Log "Scheduled maintenance task created" "SUCCESS"
+
+    } catch {
+        Write-Host "  [!] Failed to create scheduled task: $_" -ForegroundColor Red
+        Write-Log "Failed to create scheduled task: $_" "ERROR"
+    }
+}
+
+function Disable-ScheduledMaintenance {
+    <#
+    .SYNOPSIS
+    Removes the scheduled maintenance task
+    #>
+    $taskName = "WindowsCrapRemover_Maintenance"
+
+    try {
+        $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+
+        if ($existingTask) {
+            if (-not $DryRun) {
+                Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+            }
+            Write-Host "  [OK] Scheduled maintenance task removed" -ForegroundColor Green
+            Write-Log "Scheduled maintenance task removed" "SUCCESS"
+        } else {
+            Write-Host "  No scheduled maintenance task found" -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "  [!] Failed to remove scheduled task: $_" -ForegroundColor Red
+    }
+}
+
+# =============================================================================
+# PORTABLE VERSION GENERATOR
+# =============================================================================
+
+function New-PortableVersion {
+    <#
+    .SYNOPSIS
+    Creates a portable version of the script with embedded config
+    #>
+    Write-Host "`n  Creating portable version..." -ForegroundColor Cyan
+    Write-Log "Creating portable version..." "INFO"
+
+    $outputDir = Read-Host "  Enter output directory (or press Enter for Desktop)"
+
+    if ([string]::IsNullOrWhiteSpace($outputDir)) {
+        $outputDir = [Environment]::GetFolderPath("Desktop")
+    }
+
+    if (-not (Test-Path $outputDir)) {
+        Write-Host "  [!] Directory does not exist: $outputDir" -ForegroundColor Red
+        return
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd"
+    $portableName = "WCrapware_Portable_$timestamp.ps1"
+    $portablePath = Join-Path $outputDir $portableName
+
+    try {
+        # Read current script
+        $scriptContent = Get-Content -Path $PSCommandPath -Raw
+
+        # Add portable header
+        $portableHeader = @"
+# ============================================================================
+# WINDOWS CRAP REMOVER - PORTABLE VERSION
+# Generated: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+# This is a standalone portable version with no external dependencies
+# ============================================================================
+
+"@
+
+        # Embed current allowlist/denylist if they exist
+        $embeddedConfig = ""
+
+        if (Test-Path $script:AllowlistPath) {
+            $allowlistContent = Get-Content $script:AllowlistPath -Raw -ErrorAction SilentlyContinue
+            if ($allowlistContent) {
+                $embeddedConfig += @"
+
+# Embedded Allowlist
+`$script:EmbeddedAllowlist = @'
+$allowlistContent
+'@
+
+"@
+            }
+        }
+
+        if (Test-Path $script:DenylistPath) {
+            $denylistContent = Get-Content $script:DenylistPath -Raw -ErrorAction SilentlyContinue
+            if ($denylistContent) {
+                $embeddedConfig += @"
+
+# Embedded Denylist
+`$script:EmbeddedDenylist = @'
+$denylistContent
+'@
+
+"@
+            }
+        }
+
+        # Write portable version
+        $portableContent = $portableHeader + $embeddedConfig + $scriptContent
+        $portableContent | Out-File -FilePath $portablePath -Encoding UTF8 -Force
+
+        Write-Host ""
+        Write-Host "  [OK] Portable version created!" -ForegroundColor Green
+        Write-Host "  Location: $portablePath" -ForegroundColor White
+        Write-Host "  Size: $([math]::Round((Get-Item $portablePath).Length / 1KB, 2)) KB" -ForegroundColor White
+        Write-Log "Portable version created at $portablePath" "SUCCESS"
+
+    } catch {
+        Write-Host "  [!] Failed to create portable version: $_" -ForegroundColor Red
+        Write-Log "Failed to create portable version: $_" "ERROR"
+    }
+}
+
+# =============================================================================
+# TOOLS MENU
+# =============================================================================
+
+function Show-ToolsMenu {
+    <#
+    .SYNOPSIS
+    Shows the additional tools menu
+    #>
+    Clear-Host
+    Write-Host "╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+    Write-Host "║                      ADDITIONAL TOOLS                          ║" -ForegroundColor Yellow
+    Write-Host "╠════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+    Write-Host "║                                                                ║" -ForegroundColor Cyan
+    Write-Host "║  REPAIR                                                        ║" -ForegroundColor Magenta
+    Write-Host "║  1.  Repair Windows Store        - Fix Store issues            ║" -ForegroundColor White
+    Write-Host "║                                                                ║" -ForegroundColor Cyan
+    Write-Host "║  DRIVERS                                                       ║" -ForegroundColor Magenta
+    Write-Host "║  2.  Show Driver Info            - List installed drivers      ║" -ForegroundColor White
+    Write-Host "║  3.  Clean Old Drivers           - Remove unused drivers       ║" -ForegroundColor White
+    Write-Host "║                                                                ║" -ForegroundColor Cyan
+    Write-Host "║  MAINTENANCE                                                   ║" -ForegroundColor Magenta
+    Write-Host "║  4.  Enable Auto-Maintenance     - Weekly scheduled cleanup    ║" -ForegroundColor White
+    Write-Host "║  5.  Disable Auto-Maintenance    - Remove scheduled task       ║" -ForegroundColor White
+    Write-Host "║                                                                ║" -ForegroundColor Cyan
+    Write-Host "║  EXPORT                                                        ║" -ForegroundColor Magenta
+    Write-Host "║  6.  Create Portable Version     - Standalone script           ║" -ForegroundColor White
+    Write-Host "║                                                                ║" -ForegroundColor Cyan
+    Write-Host "║  0.  Back to Main Menu                                         ║" -ForegroundColor Red
+    Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host ""
+
+    $choice = Read-Host "  Select option"
+
+    switch ($choice) {
+        '1' { Repair-WindowsStore; Read-Host "`n  Press Enter to continue" }
+        '2' { Show-DriverInfo; Read-Host "`n  Press Enter to continue" }
+        '3' { Clean-OldDrivers; Read-Host "`n  Press Enter to continue" }
+        '4' { Enable-ScheduledMaintenance; Read-Host "`n  Press Enter to continue" }
+        '5' { Disable-ScheduledMaintenance; Read-Host "`n  Press Enter to continue" }
+        '6' { New-PortableVersion; Read-Host "`n  Press Enter to continue" }
+    }
+}
+
 # Enhanced privacy settings
 function Enhance-Privacy {
     Write-Log "Enhancing privacy settings..." "INFO"
@@ -2967,6 +3386,14 @@ if ($AutoMode) {
             'f' {
                 # Quick Fix (lowercase)
                 Show-QuickFixMenu
+            }
+            'T' {
+                # Additional Tools
+                Show-ToolsMenu
+            }
+            't' {
+                # Additional Tools (lowercase)
+                Show-ToolsMenu
             }
             default {
                 Write-Log "Invalid choice. Please try again." "WARNING"
