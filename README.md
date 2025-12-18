@@ -127,16 +127,6 @@ $config = @{
 }
 ```
 
-
-## File Structure
-
-```
-WCrapware/
-├── crapremover.ps1          # Main script
-├── README.md                # This file
-└── todo.txt                 # Feature roadmap
-```
-
 ### Data Locations
 
 | Path | Purpose |
@@ -301,15 +291,15 @@ Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
 ```
 
 
-## Roadmap (from todo.txt)
+## Roadmap
 
-- [ ] Real-time system health monitoring dashboard
-- [ ] System requirements checker
-- [ ] Benchmark/before-after comparison
-- [ ] One-click fix for common issues
-- [ ] Automatic driver updater/cleaner
-- [ ] Windows Store repair functionality
-- [ ] Automatic scheduled maintenance
+- [x] Real-time system health monitoring dashboard
+- [x] System requirements checker
+- [x] Benchmark/before-after comparison
+- [x] One-click fix for common issues
+- [x] Automatic driver updater/cleaner
+- [x] Windows Store repair functionality
+- [x] Automatic scheduled maintenance
+- [x] Portable version generator
 - [ ] Cloud backup integration
-- [ ] Portable version generator
 - [ ] Multi-language support
